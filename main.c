@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <strings.h>
 #include <wayland-client.h>
@@ -159,13 +160,15 @@ static void layer_surface_configure(void *data,
 	output->width = width;
 	output->height = height;
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
+	swaybg_log(LOG_INFO, "layer_surface_configure: begin render_frame..");
 	render_frame(output);
+	swaybg_log(LOG_INFO, "render done");
 }
 
 static void layer_surface_closed(void *data,
 		struct zwlr_layer_surface_v1 *surface) {
 	struct swaybg_output *output = data;
-	swaybg_log(LOG_DEBUG, "Destroying output %s (%s)",
+	swaybg_log(LOG_INFO, "layer_surface_closed: Destroying output %s (%s)",
 			output->name, output->identifier);
 	destroy_swaybg_output(output);
 }
@@ -179,22 +182,28 @@ static void output_geometry(void *data, struct wl_output *output, int32_t x,
 		int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel,
 		const char *make, const char *model, int32_t transform) {
 	// Who cares
+	swaybg_log(LOG_INFO, "output_geometry: x=%d, y=%d, with_mm=%d, height_mm=%d, model=%s (%s)", x, y, width_mm, height_mm,
+			model, make);
 }
 
 static void output_mode(void *data, struct wl_output *output, uint32_t flags,
 		int32_t width, int32_t height, int32_t refresh) {
 	// Who cares
+	swaybg_log(LOG_INFO, "output_mode: w=%d, h=%d, refresh=%d", width, height, refresh);
 }
 
 static void output_done(void *data, struct wl_output *output) {
 	// Who cares
+	swaybg_log(LOG_INFO, "output_done");
 }
 
 static void output_scale(void *data, struct wl_output *wl_output,
 		int32_t scale) {
 	struct swaybg_output *output = data;
 	output->scale = scale;
+	swaybg_log(LOG_INFO, "output_scale: %d", scale);
 	if (output->state->run_display && output->width > 0 && output->height > 0) {
+		swaybg_log(LOG_INFO, "output_scale: begin render_frame");
 		render_frame(output);
 	}
 }
@@ -292,12 +301,13 @@ static void create_layer_surface(struct swaybg_output *output) {
 static void xdg_output_handle_done(void *data,
 		struct zxdg_output_v1 *xdg_output) {
 	struct swaybg_output *output = data;
+	swaybg_log(LOG_INFO, "xdg_output_done, config=%p, layer_surface=%p", output->config, output->layer_surface);
 	if (!output->config) {
 		swaybg_log(LOG_DEBUG, "Could not find config for output %s (%s)",
 				output->name, output->identifier);
 		destroy_swaybg_output(output);
 	} else if (!output->layer_surface) {
-		swaybg_log(LOG_DEBUG, "Found config %s for output %s (%s)",
+		swaybg_log(LOG_INFO, "Found config %s for output %s (%s)",
 				output->config->output, output->name, output->identifier);
 		create_layer_surface(output);
 	}
@@ -313,6 +323,9 @@ static const struct zxdg_output_v1_listener xdg_output_listener = {
 
 static void handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
+
+	swaybg_log(LOG_INFO, "On handle_global: interface=%s, version:%d, name:%d", interface, version, name);
+
 	struct swaybg_state *state = data;
 	if (strcmp(interface, wl_compositor_interface.name) == 0) {
 		state->compositor =
@@ -422,7 +435,7 @@ static void parse_command_line(int argc, char **argv,
 
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:h:i:m:o:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -437,6 +450,8 @@ static void parse_command_line(int argc, char **argv,
 		case 'i':  // image
 			free(config->image);
 
+			swaybg_log(LOG_INFO, "Set image: %s", optarg);
+
 			//Note: optarg can be a directory now.
  			read_file_or_dir(optarg, &selected_image);
 			if(selected_image == NULL)
@@ -445,11 +460,13 @@ static void parse_command_line(int argc, char **argv,
 			}
 			else
 			{
+				swaybg_log(LOG_INFO, "load image: %s", selected_image);
 				config->image = load_background_image(selected_image);
 				if (!config->image) {
 					swaybg_log(LOG_ERROR, "Failed to load image: %s", selected_image);
 				}
 				free(selected_image);
+				swaybg_log(LOG_INFO, "load image loaded.");
 			}
 			break;
 		case 'm':  // mode
@@ -473,10 +490,13 @@ static void parse_command_line(int argc, char **argv,
 			exit(EXIT_SUCCESS);
 			break;
 		default:
+			swaybg_log(LOG_INFO, "Unknown options %s", optarg);
 			fprintf(c == 'h' ? stdout : stderr, "%s", usage);
 			exit(c == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
 		}
 	}
+	swaybg_log(LOG_INFO, "options parse done.");
+			
 	if (config && !store_swaybg_output_config(state, config)) {
 		// Empty config or merged on top of an existing one
 		destroy_swaybg_output_config(config);
@@ -492,6 +512,7 @@ static void parse_command_line(int argc, char **argv,
 		// continue into empty list
 	}
 	if (wl_list_empty(&state->configs)) {
+		swaybg_log(LOG_ERROR, "options list empty.");
 		fprintf(stderr, "%s", usage);
 		exit(EXIT_FAILURE);
 	}
@@ -513,11 +534,16 @@ static void parse_command_line(int argc, char **argv,
 int main(int argc, char **argv) {
 	swaybg_log_init(LOG_DEBUG);
 
+
+	swaybg_log(LOG_INFO, "SwayBG: init");
+
 	struct swaybg_state state = {0};
 	wl_list_init(&state.configs);
 	wl_list_init(&state.outputs);
 
 	parse_command_line(argc, argv, &state);
+
+	swaybg_log(LOG_INFO, "bgin open display..");
 
 	state.display = wl_display_connect(NULL);
 	if (!state.display) {
@@ -535,6 +561,7 @@ int main(int argc, char **argv) {
 		swaybg_log(LOG_ERROR, "Missing a required Wayland interface");
 		return 1;
 	}
+	swaybg_log(LOG_INFO, "registry add listener done");
 
 	struct swaybg_output *output;
 	wl_list_for_each(output, &state.outputs, link) {
@@ -544,11 +571,19 @@ int main(int argc, char **argv) {
 			&xdg_output_listener, output);
 	}
 
+	swaybg_log(LOG_INFO, "set run_display..");
 	state.run_display = true;
+#if 1
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
 		// This space intentionally left blank
+		swaybg_log(LOG_INFO, "on dispatch >>>>>");
 	}
+#else
 
+	sleep(5);
+#endif
+
+	swaybg_log(LOG_INFO, "begin destory outputs..");
 	struct swaybg_output *tmp_output;
 	wl_list_for_each_safe(output, tmp_output, &state.outputs, link) {
 		destroy_swaybg_output(output);
